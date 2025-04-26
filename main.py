@@ -1,18 +1,40 @@
-from fastapi import FastAPI, Request, Form, Depends
+from fastapi import FastAPI, Request, Form, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from typing import Annotated
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+from passlib.context import CryptContext
 
 app = FastAPI()
-# Setup templates
 templates = Jinja2Templates(directory="templates")
 
-# Mock user database (in a real app, use a proper database)
-users_db = {
-    "admin": "password123",
-    "user1": "mypassword"
-}
+# Database setup
+DATABASE_URL = "postgresql://username:password@localhost/mydatabase"  # Update with your credentials
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# Password hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# User model
+class User(Base):
+    _tablename_ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True)
+    password = Column(String)
+
+# Create the database tables
+Base.metadata.create_all(bind=engine)
+
+# Dependency to get the database session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 # Login route - displays the form
 @app.get("/login", response_class=HTMLResponse)
@@ -23,11 +45,12 @@ async def login_page(request: Request):
 @app.post("/login")
 async def handle_login(
     request: Request,
-    username: Annotated[str, Form()],
-    password: Annotated[str, Form()]
+    username: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db)
 ):
-    # Check credentials (in a real app, use proper password hashing)
-    if username in users_db and users_db[username] == password:
+    user = db.query(User).filter(User.username == username).first()
+    if user and pwd_context.verify(password, user.password):
         # Successful login - redirect to a dashboard or home page
         return RedirectResponse(url="/welcome", status_code=303)
     else:
@@ -53,6 +76,6 @@ async def welcome_page(request: Request):
     </html>
     """
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=5000)
